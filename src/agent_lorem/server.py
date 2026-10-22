@@ -21,8 +21,10 @@ from pydantic.alias_generators import to_camel
 from .agent import build_agent
 from .runner import build_runner, create_session, get_session
 from .runs import (
+    AtCapacityError,
     Run,
     RunFinishedError,
+    RunLimits,
     RunManager,
     RunManagerClosedError,
     RunStatus,
@@ -106,7 +108,12 @@ def _view(run: Run) -> RunView:
     return RunView.model_validate(run)  # from_attributes: read the dataclass
 
 
-def create_app(agent: Agent | None = None) -> FastAPI:
+# How long a client should wait before retrying a refused start. A hint, not
+# a promise: a mock run takes ~10 s, so a slot usually frees up sooner.
+_RETRY_AFTER_SECONDS = "5"
+
+
+def create_app(agent: Agent | None = None, limits: RunLimits = RunLimits()) -> FastAPI:
     # Factory, not a module-level `app`: each test gets its own app, hence its
     # own InMemorySessionService and RunManager. uvicorn calls it via --factory.
     resolved_agent = agent or build_agent()
@@ -115,7 +122,10 @@ def create_app(agent: Agent | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[_State]:
         # Nested `async with`: exits in reverse order, so every run is aborted
         # and awaited *before* the Runner it uses is closed.
-        async with build_runner(resolved_agent) as runner, RunManager(runner) as runs:
+        async with (
+            build_runner(resolved_agent) as runner,
+            RunManager(runner, limits) as runs,
+        ):
             # Two handles to the same RunManager, for two kinds of caller:
             # - lifespan state (yielded) is copied into each request's
             #   request.state: how route handlers reach it.
@@ -151,6 +161,14 @@ def create_app(agent: Agent | None = None) -> FastAPI:
             raise HTTPException(409, f"Session {session.id} already has a running run")
         except RunManagerClosedError:
             raise HTTPException(503, "Server is shutting down")
+        except AtCapacityError:
+            # 503, not 429: the limit is the server's, not this client's rate.
+            # Retry-After tells well-behaved clients when to come back.
+            raise HTTPException(
+                503,
+                f"{limits.max_running} runs already running",
+                headers={"Retry-After": _RETRY_AFTER_SECONDS},
+            )
         # 202 + Location: "accepted, not done; poll here for the outcome".
         response.headers["Location"] = f"/runs/{run.run_id}"
         return _view(run)
