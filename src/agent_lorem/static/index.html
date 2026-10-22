@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lorem agent</title>
+<style>
+  :root {
+    --paper: #f2f4f1;
+    --panel: #e7ebe6;
+    --ink: #18231f;
+    --muted: #5e6b66;
+    --rule: #cdd4cc;
+    --thought: #7a6ab4;
+    --tool: #b9741a;
+    --answer: #2c5d8f;
+    --stop: #b4413b;
+    --ok: #3d7a52;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", "Sitka Text", Cambria, Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #141a17;
+      --panel: #1c2420;
+      --ink: #e4ebe6;
+      --muted: #94a39c;
+      --rule: #2e3a34;
+      --thought: #a99be0;
+      --tool: #e0a04a;
+      --answer: #7fb0e6;
+      --stop: #e2766e;
+      --ok: #7cc39a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.5 var(--sans);
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+  h1 { font: 600 22px/1.2 var(--serif); margin: 0; }
+  .lede { color: var(--muted); margin: 0; }
+
+  form {
+    display: grid;
+    grid-template-columns: 9rem 1fr auto auto;
+    gap: 8px;
+    margin-top: 20px;
+    align-items: end;
+  }
+  label { display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+  input[type="text"] {
+    font: inherit; color: var(--ink); background: var(--paper);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px;
+  }
+  button {
+    font: 600 14px var(--sans); border-radius: 6px; padding: 8px 14px;
+    border: 1px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--ink); }
+  button:disabled { opacity: .4; cursor: default; }
+  :focus-visible { outline: 2px solid var(--answer); outline-offset: 2px; }
+  .continue { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  .continue input { margin: 0; }
+
+  /* The tape: one tick per SSE event, colored by what the event carried. */
+  .tape-row { margin-top: 20px; display: grid; gap: 6px; }
+  .tape {
+    display: flex; flex-wrap: wrap; gap: 1px; min-height: 22px;
+    padding: 4px; background: var(--panel); border-radius: 4px;
+  }
+  .tick { width: 3px; height: 14px; background: var(--muted); }
+  .tick.thought { background: var(--thought); }
+  .tick.tool { background: var(--tool); height: 18px; margin-top: -2px; }
+  .tick.answer { background: var(--answer); }
+  .tick.abort { background: var(--stop); height: 18px; margin-top: -2px; }
+  .tick.end { width: 8px; background: var(--ink); }
+  .tape-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; color: var(--muted); margin: 0; }
+  .tape-meta div { display: flex; gap: 6px; }
+  .tape-meta dt::after { content: ":"; }
+  .tape-meta dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .status[data-state="running"] { color: var(--answer); }
+  .status[data-state="completed"] { color: var(--ok); }
+  .status[data-state="aborted"], .status[data-state="failed"] { color: var(--stop); }
+
+  .notice { margin: 12px 0 0; color: var(--stop); min-height: 1.5em; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 22rem); gap: 32px; margin-top: 16px; }
+  .transcript { max-width: 65ch; font: 17px/1.65 var(--serif); }
+  .transcript .empty { color: var(--muted); font-family: var(--sans); font-size: 15px; }
+  /* Scoped to .transcript: ticks and raw lines reuse the same kind names. */
+  .transcript .thought { color: var(--thought); font-style: italic; margin: 0 0 12px; }
+  .transcript .event-note { font: 13px/1.4 var(--sans); color: var(--tool); margin: 0 0 12px; }
+  .transcript .event-note.stopped { color: var(--stop); }
+  .transcript .answer { white-space: pre-wrap; margin: 0 0 12px; }
+  .transcript .answer.streaming::after {
+    content: ""; display: inline-block; width: .5em; height: 1em; margin-left: 2px;
+    vertical-align: -0.15em; background: var(--answer); animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .transcript .answer.streaming::after { animation: none; } }
+
+  details { font-size: 13px; }
+  summary { cursor: pointer; color: var(--muted); }
+  .raw { list-style: none; padding: 0; margin: 8px 0 0; max-height: 60vh; overflow: auto; }
+  .raw li {
+    font: 12px/1.45 var(--mono); padding: 4px 0 4px 8px; border-bottom: 1px solid var(--rule);
+    border-left: 3px solid var(--muted); white-space: pre-wrap; word-break: break-all;
+  }
+  /* Same colors as the tape, so a line can be matched to its tick. */
+  .raw li.thought { border-left-color: var(--thought); }
+  .raw li.tool { border-left-color: var(--tool); }
+  .raw li.answer { border-left-color: var(--answer); }
+  .raw li.abort { border-left-color: var(--stop); }
+  .raw li b { color: var(--muted); font-weight: 400; }
+
+  @media (max-width: 760px) {
+    /* Fields full width; Start and Stop share the row beneath them. */
+    form { grid-template-columns: 1fr 1fr; }
+    form > label { grid-column: 1 / -1; }
+    main { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Lorem agent</h1>
+    <p class="lede">Start a run, watch it stream, stop it, or close the tab and come back to it.</p>
+  </header>
+
+  <form id="start-form">
+    <label>User
+      <input type="text" id="user-id" required autocomplete="off" value="demo_user">
+    </label>
+    <label class="message">Message
+      <input type="text" id="message" required autocomplete="off" value="Tell me something">
+    </label>
+    <button type="submit" id="start">Start run</button>
+    <button type="button" id="stop" class="secondary" disabled>Stop run</button>
+    <label class="continue">
+      <input type="checkbox" id="continue-session"> Continue the last session
+    </label>
+  </form>
+
+  <section class="tape-row" aria-label="Events received">
+    <div class="tape" id="tape" role="img" aria-label="No events yet"></div>
+    <dl class="tape-meta">
+      <div><dt>Status</dt><dd class="status" id="status" data-state="idle">Idle</dd></div>
+      <div><dt>Events</dt><dd id="event-count">0</dd></div>
+      <div><dt>Last-Event-ID</dt><dd id="last-id">none</dd></div>
+      <div><dt>Session</dt><dd id="session-id">new</dd></div>
+    </dl>
+  </section>
+
+  <p class="notice" id="notice" role="status"></p>
+
+  <main>
+    <article class="transcript" id="transcript" aria-live="polite">
+      <p class="empty">No run yet. The agent ignores your message and streams lorem ipsum, one word at a time.</p>
+    </article>
+    <aside>
+      <details id="raw-panel">
+        <summary>Raw events, exactly as ADK sent them</summary>
+        <ol class="raw" id="raw"></ol>
+      </details>
+    </aside>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const RAW_LIMIT = 500;  // newest raw events kept in the panel
+
+// localStorage can throw (private mode, blocked storage); the page must work without it.
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  remove(key) { try { localStorage.removeItem(key); } catch {} },
+};
+
+let source = null;      // the EventSource for the current run
+let runId = null;
+let ended = false;      // true once the `end` event has arrived
+let eventCount = 0;
+// Elements for the model response being streamed right now. Partial events
+// append to them; the response's final (non-partial) event *replaces* their
+// text, because ADK sends the whole text again as the aggregate.
+let current = {};
+
+function setStatus(state, text) {
+  $("status").dataset.state = state;
+  $("status").textContent = text;
+  const running = state === "running" || state === "stopping";
+  $("start").disabled = running;
+  $("stop").disabled = !running || state === "stopping";
+}
+
+function notify(text) { $("notice").textContent = text; }
+
+function resetView() {
+  eventCount = 0;
+  current = {};
+  $("tape").replaceChildren();
+  $("tape").setAttribute("aria-label", "No events yet");
+  $("raw").replaceChildren();
+  $("transcript").replaceChildren();
+  $("event-count").textContent = "0";
+  $("last-id").textContent = "none";
+  notify("");
+}
+
+function addTick(kind) {
+  const tick = document.createElement("span");
+  tick.className = `tick ${kind}`;
+  $("tape").append(tick);
+  $("tape").setAttribute("aria-label", `${$("tape").childElementCount} events received`);
+}
+
+function addRaw(id, json, kind) {
+  const raw = $("raw");
+  // Stay pinned to the newest event, unless the reader has scrolled up.
+  const pinned = raw.scrollHeight - raw.scrollTop - raw.clientHeight < 24;
+  const item = document.createElement("li");
+  item.className = kind;
+  const label = document.createElement("b");
+  label.textContent = `${id} `;
+  item.append(label, json);  // text nodes only: model output never becomes HTML
+  raw.append(item);
+  if (raw.childElementCount > RAW_LIMIT) raw.firstElementChild.remove();
+  if (pinned) raw.scrollTop = raw.scrollHeight;
+}
+
+function block(kind, tag, className) {
+  if (!current[kind]) {
+    current[kind] = document.createElement(tag);
+    current[kind].className = className;
+    $("transcript").append(current[kind]);
+  }
+  return current[kind];
+}
+
+function addNote(text, extraClass = "") {
+  const note = document.createElement("p");
+  note.className = `event-note ${extraClass}`.trim();
+  note.textContent = text;
+  $("transcript").append(note);
+}
+
+function kindOf(event) {
+  if (event.errorCode) return "abort";
+  const part = event.content?.parts?.[0] ?? {};
+  if (part.functionCall || part.functionResponse) return "tool";
+  if (part.thought) return "thought";
+  return part.text ? "answer" : "other";
+}
+
+function onAdkEvent(event) {
+  addTick(kindOf(event));
+  if (event.errorCode === "INVOCATION_ABORTED") {
+    addNote("The run stopped here.", "stopped");
+  } else if (event.errorCode) {
+    addNote(`The agent reported ${event.errorCode}.`, "stopped");
+  }
+  for (const part of event.content?.parts ?? []) {
+    if (part.thought && part.text) {
+      const el = block("thought", "p", "thought");
+      el.textContent = event.partial ? el.textContent + part.text : part.text;
+    } else if (part.functionCall && !event.partial) {
+      // The call also arrives as a partial first; show it once, from the aggregate.
+      addNote(`Called ${part.functionCall.name}`);
+    } else if (part.functionResponse) {
+      // A summary, not the payload: tool output can hold data the page shouldn't show.
+      const text = part.functionResponse.response?.text ?? "";
+      const words = text.split(/\s+/).filter(Boolean).length;
+      addNote(`${part.functionResponse.name} returned ${words} words`);
+    } else if (part.text) {
+      const el = block("answer", "div", "answer streaming");
+      el.textContent = event.partial ? el.textContent + part.text : part.text;
+      if (!event.partial) el.classList.remove("streaming");
+    }
+  }
+  if (!event.partial && event.content?.role === "model") current = {};
+}
+
+function onEnd(view) {
+  ended = true;
+  source.close();  // EventSource reconnects even after a normal close; stop it here.
+  addTick("end");
+  current.answer?.classList.remove("streaming");
+  showFinal(view);
+}
+
+function showFinal(view) {
+  const labels = { completed: "Completed", aborted: "Stopped", failed: "Failed" };
+  setStatus(view.status, labels[view.status] ?? view.status);
+  if (view.status === "failed") notify(`The run failed: ${view.error}`);
+}
+
+function follow(id) {
+  source?.close();
+  runId = id;
+  ended = false;
+  setStatus("running", "Running");
+  source = new EventSource(`/runs/${encodeURIComponent(id)}/events`);
+  source.onopen = () => { if (!ended && $("status").dataset.state === "reconnecting") setStatus("running", "Running"); };
+  source.onmessage = (message) => {
+    eventCount += 1;
+    $("event-count").textContent = String(eventCount);
+    $("last-id").textContent = message.lastEventId;
+    const event = JSON.parse(message.data);
+    addRaw(message.lastEventId, message.data, kindOf(event));
+    onAdkEvent(event);
+  };
+  source.addEventListener("end", (message) => {
+    $("last-id").textContent = message.lastEventId;
+    onEnd(JSON.parse(message.data));
+  });
+  source.onerror = async () => {
+    if (ended) return;
+    if (source.readyState === EventSource.CONNECTING) {
+      // The browser retries by itself, sending Last-Event-ID; the server resumes from there.
+      setStatus("reconnecting", "Reconnecting");
+      return;
+    }
+    // CLOSED: the server answered something other than a stream (404: the run was evicted).
+    const response = await fetch(`/runs/${encodeURIComponent(id)}`);
+    if (response.ok) showFinal(await response.json());
+    else forgetRun("This run is no longer on the server.");
+  };
+}
+
+function forgetRun(message) {
+  source?.close();
+  store.remove("runId");
+  runId = null;
+  setStatus("idle", "Idle");
+  notify(message);
+}
+
+async function startRun(event) {
+  event.preventDefault();
+  const userId = $("user-id").value.trim();
+  const body = { userId, message: $("message").value.trim() };
+  const sessionId = store.get("sessionId");
+  if ($("continue-session").checked && sessionId) body.sessionId = sessionId;
+
+  const response = await fetch("/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 503) {
+    const retry = response.headers.get("Retry-After");
+    const { detail } = await response.json();
+    notify(retry ? `${detail}. Try again in ${retry} seconds.` : `${detail}.`);
+    return;
+  }
+  if (response.status === 409) { notify("This session already has a run in progress."); return; }
+  if (response.status === 404) {
+    store.remove("sessionId");
+    $("continue-session").checked = false;
+    $("session-id").textContent = "new";
+    notify("That session no longer exists. Start a run in a new session.");
+    return;
+  }
+  if (!response.ok) { notify(`The server refused the run (${response.status}).`); return; }
+
+  const run = await response.json();
+  store.set("userId", userId);
+  store.set("sessionId", run.sessionId);
+  store.set("runId", run.runId);
+  $("session-id").textContent = run.sessionId.slice(0, 8);
+  resetView();
+  follow(run.runId);
+}
+
+async function stopRun() {
+  if (!runId) return;
+  setStatus("stopping", "Stopping");
+  const response = await fetch(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  // 202: requested. A few words already in flight still arrive, then `end` says "Stopped".
+  if (response.status === 409) notify("The run had already finished.");
+}
+
+async function resume() {
+  // A reopened tab: replay the last run from the server's log, from event 1.
+  const savedUser = store.get("userId");
+  if (savedUser) $("user-id").value = savedUser;
+  const sessionId = store.get("sessionId");
+  if (sessionId) {
+    $("session-id").textContent = sessionId.slice(0, 8);
+    $("continue-session").checked = true;
+  }
+  const saved = store.get("runId");
+  if (!saved) return;
+  const response = await fetch(`/runs/${encodeURIComponent(saved)}`);
+  if (!response.ok) {
+    forgetRun("Your last run is no longer on the server. Finished runs are kept for a limited time.");
+    return;
+  }
+  resetView();
+  follow(saved);
+}
+
+$("start-form").addEventListener("submit", startRun);
+$("stop").addEventListener("click", stopRun);
+resume();
+</script>
+</body>
+</html>

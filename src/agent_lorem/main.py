@@ -11,7 +11,7 @@ from .serving import DrainingServer
 
 def _configure_logging() -> None:
     logging.basicConfig(format="%(levelname)s %(name)s: %(message)s")
-    logging.getLogger("agent_lorem").setLevel(logging.INFO)
+    logging.getLogger("agent_lorem").setLevel(logging.DEBUG)
 
 
 def main() -> None:
@@ -24,7 +24,7 @@ def serve() -> None:
     app = create_app()
     config = uvicorn.Config(
         app,
-        host="127.0.01",
+        host="127.0.0.1",
         port=8000,
         timeout_graceful_shutdown=10,
         # Backstop, not the mechanism: if a connection still won't close this

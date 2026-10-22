@@ -1,6 +1,17 @@
+"""FastAPI front end.
+
+Layer 2: runs execute in background tasks; the request only starts them.
+Layer 3: an explicit cancel endpoint. Closing a connection never cancels.
+Layer 4: an SSE stream per run that replays from Last-Event-ID, then follows.
+Layer 5: begin_shutdown() lets the process abort runs before uvicorn drains.
+Layer 6: RunLimits bound running runs, retained runs and per-run log size.
+Layer 7: GET / serves the browser client, static/index.html.
+"""
+
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, TypedDict
 
 from fastapi import (
@@ -13,6 +24,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from google.adk import Agent, Runner
 from pydantic import BaseModel, ConfigDict, Field
@@ -108,6 +120,8 @@ def _view(run: Run) -> RunView:
     return RunView.model_validate(run)  # from_attributes: read the dataclass
 
 
+_INDEX_HTML = Path(__file__).with_name("static") / "index.html"
+
 # How long a client should wait before retrying a refused start. A hint, not
 # a promise: a mock run takes ~10 s, so a slot usually frees up sooner.
 _RETRY_AFTER_SECONDS = "5"
@@ -118,7 +132,7 @@ def create_app(agent: Agent | None = None, limits: RunLimits = RunLimits()) -> F
     # own InMemorySessionService and RunManager. uvicorn calls it via --factory.
     resolved_agent = agent or build_agent()
 
-    @asynccontextmanager
+    @asynccontextmanager  # Idiom: lifespan = setup before `yield`, teardown after.
     async def lifespan(app: FastAPI) -> AsyncGenerator[_State]:
         # Nested `async with`: exits in reverse order, so every run is aborted
         # and awaited *before* the Runner it uses is closed.
@@ -138,6 +152,11 @@ def create_app(agent: Agent | None = None, limits: RunLimits = RunLimits()) -> F
                 del app.state.runs
 
     app = FastAPI(title="agent-lorem", lifespan=lifespan)
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        # Same origin as the API, so the page needs no CORS configuration.
+        return FileResponse(_INDEX_HTML)
 
     @app.post(
         "/runs", status_code=status.HTTP_202_ACCEPTED, response_model_exclude_none=True
