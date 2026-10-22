@@ -1,0 +1,37 @@
+[project]
+name = "agent-lorem"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Steve", email = "panningforbacon@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-adk>=2.12.0",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+start = "agent_lorem.main:main"
+server = "agent_lorem.main:serve"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.15",
+    "httpx2>=2.15.1",
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Third-party noise, not actionable here. Scoped by message so new warnings still show.
+filterwarnings = [
+    "ignore:.*JSON_SCHEMA_FOR_FUNC_DECL:UserWarning",
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
